@@ -1,35 +1,115 @@
 spring:
   application:
     name: api-gateway
+  sleuth:
+    enabled: true
+    sampler:
+      probability: 1.0 # 100% трассировка (для прода лучше 0.1)
+    zipkin:
+      base-url: http://localhost:9411 # Адрес Zipkin сервера
   cloud:
     gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
       discovery:
         locator:
           enabled: true
           lower-case-service-id: true
+      httpclient:
+        connect-timeout: 2000 # 2 секунды на установление соединения
+        response-timeout: 5s  # 5 секунд ждем ответ от сервиса
+        pool:
+          maxConnections: 1000        # макс соединений
+          acquireTimeout: 2000         # таймаут получения из пула
+      default-filters:
+        - name: Retry
+          args:
+            retries: 3            # количество попыток
+            statuses: BAD_GATEWAY # на какие ошибки пробовать еще раз
+            methods: GET          # для каких HTTP-методов
       routes:
         - id: user-service
           uri: lb://user-service
           predicates:
             - Path=/users/**
           filters:
-            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: userServiceCircuitBreaker
+                fallbackUri: forward:/fallback/users
+                statusCodes: 500,502,503,504
+                slidingWindowSize: 10
+                failureRateThreshold: 50
+                waitDurationInOpenState: 5s
+                permittedNumberOfCallsInHalfOpenState: 3
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 200
+                redis-rate-limiter.requestedTokens: 1
 
         - id: order-service
           uri: lb://order-service
           predicates:
             - Path=/orders/**
           filters:
-            - StripPrefix=1
-
-        - id:
+            - name: CircuitBreaker
+              args:
+                name: orderServiceCircuitBreaker
+                fallbackUri: forward:/fallback/orders
+                statusCodes: 500,502,503,504  # какие статусы считать ошибкой
+                slidingWindowSize: 10          # размер окна статистики
+                failureRateThreshold: 50       % процент ошибок для срабатывания
+                waitDurationInOpenState: 5s    # сколько быть в OPEN состоянии
+                permittedNumberOfCallsInHalfOpenState: 3
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100    # запросов в секунду
+                redis-rate-limiter.burstCapacity: 200    # пиковый лимит
+                redis-rate-limiter.requestedTokens: 1    # "стоимость" запроса
 
 eureka:
   client:
-    service-url:
-      defaultZone: http://localhost:8761/eureka/
     register-with-eureka: true
     fetch-registry: true
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    healthcheck:
+      enabled: true
 
 server:
   port: 8080
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  endpoints:
+    web:
+      exposure:
+        include: health, info, gateway
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  metrics:
+    enable:
+      http: true
+      jvm: true
+      system: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+logging:
+  level:
+    org.springframework.cloud.gateway: DEBUG
+    reactor.netty.http.client: DEBUG
