@@ -27,7 +27,7 @@ spring:
         response-timeout: 5s  # 5 секунд ждем ответ от сервиса
         pool:
           maxConnections: 1000        # макс соединений
-          acquireTimeout: 2000         # таймаут получения из пула
+          acquireTimeout: 2000        # таймаут получения из пула
       default-filters:
         - name: Retry
           args:
@@ -64,9 +64,9 @@ spring:
               args:
                 name: orderServiceCircuitBreaker
                 fallbackUri: forward:/fallback/orders
-                statusCodes: 500,502,503,504  # какие статусы считать ошибкой
+                statusCodes: 500,502,503,504   # какие статусы считать ошибкой
                 slidingWindowSize: 10          # размер окна статистики
-                failureRateThreshold: 50       % процент ошибок для срабатывания
+                failureRateThreshold: 50       # % процент ошибок для срабатывания
                 waitDurationInOpenState: 5s    # сколько быть в OPEN состоянии
                 permittedNumberOfCallsInHalfOpenState: 3
             - name: RequestRateLimiter
@@ -74,6 +74,44 @@ spring:
                 redis-rate-limiter.replenishRate: 100    # запросов в секунду
                 redis-rate-limiter.burstCapacity: 200    # пиковый лимит
                 redis-rate-limiter.requestedTokens: 1    # "стоимость" запроса
+        - id: auth-service
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authServiceCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+                statusCodes: 500, 502, 503, 504
+                slidingWindowsSize: 10
+                failureRateThreshold: 50
+                waitDurationInOpenState: 5s
+                permittedNumberOfCallsInHalfOpenState: 3
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 200
+                redis-rate-limiter.requestedTokens: 1
+        - id: analytics-service
+          uri: lb://analytics-service
+          predicates:
+            - Path=/analytics/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authServiceCircuitBreaker
+                fallbackUri: forward:/fallback/analytics
+                statusCodes: 500, 502, 503, 504
+                slidingWindowsSize: 10
+                failureRateThreshold: 50
+                waitDurationInOpenState: 5s
+                permittedNumberOfCallsInHalfOpenState: 3
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 200
+                redis-rate-limiter.requestedTokens: 1
 
 eureka:
   client:
